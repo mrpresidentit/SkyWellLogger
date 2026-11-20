@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 1. Разрешения для работы с автомобилем (VHAL) -->
     <uses-permission android:name="android.car.permission.CAR_ENERGY" />
     <uses-permission android:name="android.car.permission.CAR_SPEED" />
     <uses-permission android:name="android.car.permission.CAR_MILEAGE" />
@@ -8,6 +9,7 @@
     <uses-permission android:name="android.car.permission.CAR_INFO" />
     <uses-permission android:name="android.car.permission.CAR_VENDOR_EXTENSION" />
     
+    <!-- 2. Разрешения для OTA-обновления (скачивание и установка APK) -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -17,6 +19,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
         
+        <!-- Главный экран приложения -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -26,6 +29,7 @@
             </intent-filter>
         </activity>
 
+        <!-- Провайдер для безопасной передачи скачанного APK системе установки -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -35,5 +39,6 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        
     </application>
 </manifest>
