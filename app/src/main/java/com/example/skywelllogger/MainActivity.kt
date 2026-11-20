@@ -1,142 +1,90 @@
 package com.example.skywelllogger
 
-import android.car.Car
-import android.car.hardware.CarPropertyValue
-import android.car.hardware.property.CarPropertyManager
-import android.content.Intent
-import android.net.Uri
-import android.os.AsyncTask
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
-import android.widget.Button
-import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.FileProvider
-import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
+import java.lang.reflect.Proxy
 
 class MainActivity : AppCompatActivity() {
 
     private val TAG = "SKYWELL_TEST"
-    private var car: Car? = null
-    private var pm: CarPropertyManager? = null
-
-    private val UPDATE_URL = "https://github.com/ВАШ_ЛОГИН/ВАШ_РЕПОЗИТОРИЙ/releases/latest/download/app-debug.apk"
-
-    private val IDS = mapOf(
-        0x11600309 to "EV_BATTERY_LEVEL (SoC)",
-        0x1160030c to "EV_CHARGE_RATE (Power)",
-        0x11600204 to "PERF_ODOMETER (Mileage)",
-        0x11600517 to "BATTERY_PROP_0x11600517",
-        0x11600518 to "BATTERY_PROP_0x11600518",
-        0x11400454 to "PEDAL_OR_STEER_0x11400454",
-        0x11400e60 to "FAST_PROP_0x11400e60"
-    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val tv = TextView(this).apply {
+            text = "SkyWell Logger запущен.\nСмотрите логи в терминале Mac."
+            textSize = 20f
             setPadding(50, 50, 50, 50)
         }
+        setContentView(tv)
 
-        val btnUpdate = Button(this).apply {
-            text = "Проверить обновления"
-            setOnClickListener { downloadAndInstallUpdate() }
-        }
-        layout.addView(btnUpdate)
-
-        val tvStatus = TextView(this).apply { text = "Логи пишутся в logcat..."; textSize = 18f }
-        layout.addView(tvStatus)
-        
-        setContentView(layout)
+        Log.d(TAG, "=== APP STARTED ===")
 
         try {
-            car = Car.createCar(this)
-            pm = car?.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager
-            Log.d(TAG, "=== APP STARTED ===")
+            // 1. Car.createCar(context)
+            val carClass = Class.forName("android.car.Car")
+            val createCarMethod = carClass.getMethod("createCar", Context::class.java)
+            val carInstance = createCarMethod.invoke(null, this)
 
-            val cb = object : CarPropertyManager.CarPropertyEventCallback {
-                override fun onChangeEvent(v: CarPropertyValue<*>) {
-                    val name = IDS[v.propertyId] ?: "0x${Integer.toHexString(v.propertyId)}"
-                    Log.i(TAG, "PUSH >>> $name = ${v.value}")
+            // 2. car.getCarManager("property")
+            val getCarManagerMethod = carClass.getMethod("getCarManager", String::class.java)
+            val pm = getCarManagerMethod.invoke(carInstance, "property")
+
+            if (pm == null) {
+                Log.e(TAG, "!!! CarPropertyManager is NULL")
+                return
+            }
+            Log.d(TAG, "CarPropertyManager OK")
+
+            // 3. Создаем коллбэк через Прокси (чтобы не импортировать интерфейс)
+            val callbackInterface = Class.forName("android.car.hardware.CarPropertyManager\$CarPropertyEventCallback")
+            val callbackProxy = Proxy.newProxyInstance(
+                callbackInterface.classLoader,
+                arrayOf(callbackInterface)
+            ) { _, method, args ->
+                if (method.name == "onChangeEvent" && args != null && args.isNotEmpty()) {
+                    try {
+                        val event = args[0]
+                        val propId = event.javaClass.getMethod("getPropertyId").invoke(event) as Int
+                        val value = event.javaClass.getMethod("getValue").invoke(event)
+                        Log.i(TAG, "PUSH >>> 0x${Integer.toHexString(propId)} = $value")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error parsing event: ${e.message}")
+                    }
+                } else if (method.name == "onErrorEvent") {
+                    Log.e(TAG, "PUSH ERROR")
                 }
-                override fun onErrorEvent(id: Int, zone: Int) {
-                    Log.e(TAG, "PUSH ERROR on $id")
-                }
+                null
             }
 
-            for (id in IDS.keys) {
+            // 4. Подписываемся на ID
+            val pmClass = pm.javaClass
+            val registerMethod = pmClass.getMethod("registerCallback", callbackInterface, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+            
+            val ids = listOf(
+                0x11600309, // Заряд
+                0x1160030c, // Мощность
+                0x11600204, // Пробег
+                0x11600517, // Неизвестно (возможно напряжение)
+                0x11600518, // Неизвестно (возможно мощность)
+                0x11400454, // Педали/руль
+                0x11400e60  // Быстрое свойство
+            )
+
+            for (id in ids) {
                 try {
-                    pm?.registerCallback(cb, id, CarPropertyManager.SENSOR_RATE_NORMAL)
+                    registerMethod.invoke(pm, callbackProxy, id, 1) // SENSOR_RATE_NORMAL = 1
+                    Log.d(TAG, "Subscribed to 0x${Integer.toHexString(id)}")
                 } catch (e: Exception) {
-                    Log.e(TAG, "FAILED TO SUBSCRIBE ${IDS[id]}: ${e.message}")
+                    Log.e(TAG, "FAILED TO SUBSCRIBE 0x${Integer.toHexString(id)}: ${e.message}")
                 }
             }
+
         } catch (e: Exception) {
             Log.e(TAG, "Init failed: ${e.message}", e)
         }
-    }
-
-    private fun downloadAndInstallUpdate() {
-        Toast.makeText(this, "Скачивание обновления...", Toast.LENGTH_SHORT).show()
-
-        object : AsyncTask<Void, Void, File?>() {
-            override fun doInBackground(vararg params: Void?): File? {
-                return try {
-                    val url = URL(UPDATE_URL)
-                    val connection = url.openConnection() as HttpURLConnection
-                    connection.requestMethod = "GET"
-                    connection.connect()
-
-                    if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                        Log.e(TAG, "Ошибка скачивания: ${connection.responseCode}")
-                        return null
-                    }
-
-                    val apkFile = File(cacheDir, "update.apk")
-                    val output = FileOutputStream(apkFile)
-                    connection.inputStream.copyTo(output)
-                    output.flush()
-                    output.close()
-                    apkFile
-                } catch (e: Exception) {
-                    Log.e(TAG, "Ошибка скачивания: ${e.message}")
-                    null
-                }
-            }
-
-            override fun onPostExecute(result: File?) {
-                if (result != null && result.exists()) {
-                    installApk(result)
-                } else {
-                    Toast.makeText(this@MainActivity, "Не удалось скачать APK", Toast.LENGTH_LONG).show()
-                }
-            }
-        }.execute()
-    }
-
-    private fun installApk(apkFile: File) {
-        try {
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apkFile)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Ошибка установки: ${e.message}")
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        car?.disconnect()
     }
 }
