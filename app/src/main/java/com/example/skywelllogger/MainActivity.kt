@@ -1,96 +1,90 @@
 package com.example.skywelllogger
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
+import java.io.File
+import java.io.FileOutputStream
 import java.lang.reflect.Proxy
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : AppCompatActivity() {
 
     private val TAG = "SKYWELL_TEST"
+    
+    private val UPDATE_URL = "https://github.com/mrpresidentit/SkyWellLogger/releases/latest/download/app-debug.apk"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        val tv = TextView(this).apply {
-            text = "SkyWell Logger запущен.\nСмотрите логи в терминале Mac."
-            textSize = 20f
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(50, 50, 50, 50)
         }
-        setContentView(tv)
 
-        Log.d(TAG, "=== APP STARTED ===")
+        val tvStatus = TextView(this).apply {
+            text = "SkyWell Logger\nСтатус: Ожидание данных..."
+            textSize = 20f
+        }
+        layout.addView(tvStatus)
 
+        val btnUpdate = Button(this).apply {
+            text = "Скачать обновление с GitHub"
+            setOnClickListener { 
+                tvStatus.text = "Скачивание..."
+                downloadAndInstallUpdate(tvStatus) 
+            }
+        }
+        layout.addView(btnUpdate)
+
+        setContentView(layout)
+
+        // Логика VHAL (рефлексия)
         try {
-            // 1. Car.createCar(context)
             val carClass = Class.forName("android.car.Car")
             val createCarMethod = carClass.getMethod("createCar", Context::class.java)
             val carInstance = createCarMethod.invoke(null, this)
-
-            if (carInstance == null) {
-                Log.e(TAG, "!!! Car instance is NULL")
-                return
-            }
-
-            // 2. car.getCarManager("property")
             val getCarManagerMethod = carClass.getMethod("getCarManager", String::class.java)
             val pm = getCarManagerMethod.invoke(carInstance, "property")
 
-            if (pm == null) {
-                Log.e(TAG, "!!! CarPropertyManager is NULL")
-                return
-            }
+            if (pm == null) return
             Log.d(TAG, "CarPropertyManager OK")
 
-            // 3. Создаем коллбэк через Прокси
             val callbackInterface = Class.forName("android.car.hardware.CarPropertyManager\$CarPropertyEventCallback")
             val callbackProxy = Proxy.newProxyInstance(
                 callbackInterface.classLoader,
                 arrayOf(callbackInterface)
             ) { _, method, args ->
                 if (method.name == "onChangeEvent" && args != null && args.isNotEmpty()) {
-                    try {
-                        val event = args[0]
-                        if (event != null) {
-                            val propId = event.javaClass.getMethod("getPropertyId").invoke(event) as Int
-                            val value = event.javaClass.getMethod("getValue").invoke(event)
-                            Log.i(TAG, "PUSH >>> 0x${Integer.toHexString(propId)} = $value")
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error parsing event: ${e.message}")
-                    }
-                } else if (method.name == "onErrorEvent") {
-                    Log.e(TAG, "PUSH ERROR")
+                    val event = args[0]
+                    val propId = event.javaClass.getMethod("getPropertyId").invoke(event) as Int
+                    val value = event.javaClass.getMethod("getValue").invoke(event)
+                    Log.i(TAG, "PUSH >>> 0x${Integer.toHexString(propId)} = $value")
                 }
                 null
             }
 
-            // 4. Подписываемся на ID (ИСПРАВЛЕНО: Float вместо Int для частоты)
-            val pmClass = pm.javaClass
-            val registerMethod = pmClass.getMethod(
+            val registerMethod = pm.javaClass.getMethod(
                 "registerCallback", 
                 callbackInterface, 
                 Int::class.javaPrimitiveType, 
-                Float::class.javaPrimitiveType // <--- Вот тут была ошибка
+                Float::class.javaPrimitiveType 
             )
             
-            val ids = listOf(
-                0x11600309, // Заряд
-                0x1160030c, // Мощность
-                0x11600204, // Пробег
-                0x11600517, // Неизвестно (возможно напряжение)
-                0x11600518, // Неизвестно (возможно мощность)
-                0x11400454, // Педали/руль
-                0x11400e60  // Быстрое свойство
-            )
+            val ids = listOf(0x11600309, 0x1160030c, 0x11600204, 0x11600517, 0x11600518, 0x11400454, 0x11400e60)
 
             for (id in ids) {
                 try {
-                    // Передаем 1.0f, так как метод ожидает float
                     registerMethod.invoke(pm, callbackProxy, id, 1.0f) 
-                    Log.d(TAG, "Subscribed to 0x${Integer.toHexString(id)}")
                 } catch (e: Exception) {
                     Log.e(TAG, "FAILED TO SUBSCRIBE 0x${Integer.toHexString(id)}: ${e.message}")
                 }
@@ -98,6 +92,61 @@ class MainActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Init failed: ${e.message}", e)
+        }
+    }
+
+    private fun downloadAndInstallUpdate(statusView: TextView) {
+        Thread {
+            try {
+                val url = URL(UPDATE_URL)
+                val connection = url.openConnection() as HttpURLConnection
+                connection.instanceFollowRedirects = true // Важно для GitHub!
+                connection.connect()
+
+                if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+                    runOnUiThread { statusView.text = "Ошибка: ${connection.responseCode}" }
+                    return@Thread
+                }
+
+                val apkFile = File(cacheDir, "update.apk")
+                val output = FileOutputStream(apkFile)
+                connection.inputStream.copyTo(output)
+                output.flush()
+                output.close()
+
+                runOnUiThread { 
+                    statusView.text = "Скачано! Установка..."
+                    installApk(apkFile) 
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Download Error: ${e.message}")
+                runOnUiThread { statusView.text = "Ошибка скачивания: ${e.message}" }
+            }
+        }.start()
+    }
+
+    private fun installApk(apkFile: File) {
+        try {
+            // Вариант 1: Тихая установка (если есть root)
+            /*
+            val process = Runtime.getRuntime().exec("su -c pm install -r ${apkFile.absolutePath}")
+            if (process.waitFor() == 0) {
+                Toast.makeText(this, "Обновлено! Перезапустите.", Toast.LENGTH_LONG).show()
+                return
+            }
+            */
+
+            // Вариант 2: Стандартная установка (выскочит окно "Установить?")
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apkFile)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Install Error: ${e.message}")
         }
     }
 }
