@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Button
 import android.widget.LinearLayout
@@ -20,8 +22,8 @@ class MainActivity : AppCompatActivity() {
 
     private val TAG = "SKYWELL_TEST"
     
-    // Ссылка на ваш APK (замените ВАШ_ЛОГИН на ваш ник на GitHub!)
-    private val UPDATE_URL = "https://github.com/ВАШ_ЛОГИН/SkyWellLogger/releases/latest/download/app-debug.apk"
+    // ТЕПЕРЬ ЗДЕСЬ ВАША ССЫЛКА (всегда ведет на последнюю версию)
+    private val UPDATE_URL = "https://github.com/mrpresidentit/SkyWellLogger/releases/latest/download/app-debug.apk"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,7 +34,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val tvStatus = TextView(this).apply {
-            text = "SkyWell Logger\nСтатус: Подключение к авто..."
+            text = "SkyWell Logger\nСтатус: Ожидание..."
             textSize = 20f
         }
         layout.addView(tvStatus)
@@ -48,12 +50,12 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(layout)
 
-        // Запускаем инициализацию в фоновом потоке, чтобы не вешать UI
         Thread {
             try {
-                // 1. Создаем объект Car
                 val carClass = Class.forName("android.car.Car")
                 var carInstance: Any? = null
+                val mainHandler = Handler(Looper.getMainLooper())
+
                 val createCarMethods = carClass.methods.filter { it.name == "createCar" }
                 
                 for (method in createCarMethods) {
@@ -61,6 +63,13 @@ class MainActivity : AppCompatActivity() {
                     if (paramTypes.isNotEmpty() && paramTypes[0] == Context::class.java) {
                         val args = arrayOfNulls<Any?>(paramTypes.size)
                         args[0] = this
+                        
+                        for (i in paramTypes.indices) {
+                            if (paramTypes[i] == Handler::class.java) {
+                                args[i] = mainHandler
+                            }
+                        }
+                        
                         try {
                             carInstance = method.invoke(null, *args)
                             if (carInstance != null) {
@@ -75,15 +84,13 @@ class MainActivity : AppCompatActivity() {
 
                 if (carInstance == null) {
                     Log.e(TAG, "!!! Could not create Car instance")
-                    runOnUiThread { tvStatus.text = "Ошибка: Car не создан" }
                     return@Thread
                 }
 
-                // 2. ЖДЕМ ПОДКЛЮЧЕНИЯ (до 5 секунд)
                 var isConnected = false
                 var retries = 0
                 val isConnectedMethod = carClass.getMethod("isConnected")
-                while (retries < 50) {
+                while (retries < 100) {
                     try {
                         if (isConnectedMethod.invoke(carInstance) as Boolean) {
                             isConnected = true
@@ -95,23 +102,18 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (!isConnected) {
-                    Log.e(TAG, "!!! Car failed to connect after 5 seconds")
+                    Log.e(TAG, "!!! Car failed to connect after 10 seconds")
                     runOnUiThread { tvStatus.text = "Ошибка: Нет связи с CarService" }
                     return@Thread
                 }
+                
                 Log.d(TAG, "Car is connected!")
-                runOnUiThread { tvStatus.text = "Подключено! Ожидание данных..." }
+                runOnUiThread { tvStatus.text = "Подключено! Смотрим логи..." }
 
-                // 3. Получаем CarPropertyManager
                 val getCarManagerMethod = carClass.getMethod("getCarManager", String::class.java)
                 val pm = getCarManagerMethod.invoke(carInstance, "property")
-                if (pm == null) {
-                    Log.e(TAG, "!!! CarPropertyManager is NULL")
-                    return@Thread
-                }
-                Log.d(TAG, "CarPropertyManager OK")
-
-                // 4. Создаем коллбэк для приема данных
+                if (pm == null) return@Thread
+                
                 val callbackInterface = Class.forName("android.car.hardware.CarPropertyManager\$CarPropertyEventCallback")
                 val callbackProxy = Proxy.newProxyInstance(
                     callbackInterface.classLoader,
@@ -125,16 +127,11 @@ class MainActivity : AppCompatActivity() {
                                 val value = event.javaClass.getMethod("getValue").invoke(event)
                                 Log.i(TAG, "PUSH >>> 0x${Integer.toHexString(propId)} = $value")
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing event: ${e.message}")
-                        }
-                    } else if (method.name == "onErrorEvent") {
-                        Log.e(TAG, "PUSH ERROR")
+                        } catch (e: Exception) {}
                     }
                     null
                 }
 
-                // 5. Подписываемся на ID
                 val registerMethod = pm.javaClass.getMethod(
                     "registerCallback", 
                     callbackInterface, 
@@ -142,17 +139,14 @@ class MainActivity : AppCompatActivity() {
                     Float::class.javaPrimitiveType 
                 )
                 
-                val ids = listOf(
-                    0x11600309, 0x1160030c, 0x11600204, 
-                    0x11600517, 0x11600518, 0x11400454, 0x11400e60
-                )
+                val ids = listOf(0x11600309, 0x1160030c, 0x11600204, 0x11600517, 0x11600518, 0x11400454, 0x11400e60)
 
                 for (id in ids) {
                     try {
                         registerMethod.invoke(pm, callbackProxy, id, 1.0f) 
                         Log.d(TAG, "Subscribed to 0x${Integer.toHexString(id)}")
                     } catch (e: Exception) {
-                        Log.e(TAG, "FAILED TO SUBSCRIBE 0x${Integer.toHexString(id)}: ${e.message}")
+                        Log.e(TAG, "FAILED TO SUBSCRIBE 0x${Integer.toHexString(id)}")
                     }
                 }
 
@@ -167,11 +161,11 @@ class MainActivity : AppCompatActivity() {
             try {
                 val url = URL(UPDATE_URL)
                 val connection = url.openConnection() as HttpURLConnection
-                connection.instanceFollowRedirects = true
+                connection.instanceFollowRedirects = true 
                 connection.connect()
 
                 if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                    runOnUiThread { statusView.text = "Ошибка: ${connection.responseCode}" }
+                    runOnUiThread { statusView.text = "Ошибка HTTP: ${connection.responseCode}" }
                     return@Thread
                 }
 
@@ -188,7 +182,7 @@ class MainActivity : AppCompatActivity() {
 
             } catch (e: Exception) {
                 Log.e(TAG, "Download Error: ${e.message}")
-                runOnUiThread { statusView.text = "Ошибка: ${e.message}" }
+                runOnUiThread { statusView.text = "Ошибка скачивания: ${e.message}" }
             }
         }.start()
     }
