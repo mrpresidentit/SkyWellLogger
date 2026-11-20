@@ -29,6 +29,11 @@ class MainActivity : AppCompatActivity() {
             val createCarMethod = carClass.getMethod("createCar", Context::class.java)
             val carInstance = createCarMethod.invoke(null, this)
 
+            if (carInstance == null) {
+                Log.e(TAG, "!!! Car instance is NULL")
+                return
+            }
+
             // 2. car.getCarManager("property")
             val getCarManagerMethod = carClass.getMethod("getCarManager", String::class.java)
             val pm = getCarManagerMethod.invoke(carInstance, "property")
@@ -39,7 +44,7 @@ class MainActivity : AppCompatActivity() {
             }
             Log.d(TAG, "CarPropertyManager OK")
 
-            // 3. Создаем коллбэк через Прокси (чтобы не импортировать интерфейс)
+            // 3. Создаем коллбэк через Прокси
             val callbackInterface = Class.forName("android.car.hardware.CarPropertyManager\$CarPropertyEventCallback")
             val callbackProxy = Proxy.newProxyInstance(
                 callbackInterface.classLoader,
@@ -48,9 +53,11 @@ class MainActivity : AppCompatActivity() {
                 if (method.name == "onChangeEvent" && args != null && args.isNotEmpty()) {
                     try {
                         val event = args[0]
-                        val propId = event.javaClass.getMethod("getPropertyId").invoke(event) as Int
-                        val value = event.javaClass.getMethod("getValue").invoke(event)
-                        Log.i(TAG, "PUSH >>> 0x${Integer.toHexString(propId)} = $value")
+                        if (event != null) {
+                            val propId = event.javaClass.getMethod("getPropertyId").invoke(event) as Int
+                            val value = event.javaClass.getMethod("getValue").invoke(event)
+                            Log.i(TAG, "PUSH >>> 0x${Integer.toHexString(propId)} = $value")
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error parsing event: ${e.message}")
                     }
@@ -60,9 +67,14 @@ class MainActivity : AppCompatActivity() {
                 null
             }
 
-            // 4. Подписываемся на ID
+            // 4. Подписываемся на ID (ИСПРАВЛЕНО: Float вместо Int для частоты)
             val pmClass = pm.javaClass
-            val registerMethod = pmClass.getMethod("registerCallback", callbackInterface, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+            val registerMethod = pmClass.getMethod(
+                "registerCallback", 
+                callbackInterface, 
+                Int::class.javaPrimitiveType, 
+                Float::class.javaPrimitiveType // <--- Вот тут была ошибка
+            )
             
             val ids = listOf(
                 0x11600309, // Заряд
@@ -76,7 +88,8 @@ class MainActivity : AppCompatActivity() {
 
             for (id in ids) {
                 try {
-                    registerMethod.invoke(pm, callbackProxy, id, 1) // SENSOR_RATE_NORMAL = 1
+                    // Передаем 1.0f, так как метод ожидает float
+                    registerMethod.invoke(pm, callbackProxy, id, 1.0f) 
                     Log.d(TAG, "Subscribed to 0x${Integer.toHexString(id)}")
                 } catch (e: Exception) {
                     Log.e(TAG, "FAILED TO SUBSCRIBE 0x${Integer.toHexString(id)}: ${e.message}")
