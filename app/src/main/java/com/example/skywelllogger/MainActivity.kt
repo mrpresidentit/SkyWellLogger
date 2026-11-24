@@ -21,8 +21,6 @@ import java.net.URL
 class MainActivity : AppCompatActivity() {
 
     private val TAG = "SKYWELL_TEST"
-    
-    // ТЕПЕРЬ ЗДЕСЬ ВАША ССЫЛКА (всегда ведет на последнюю версию)
     private val UPDATE_URL = "https://github.com/mrpresidentit/SkyWellLogger/releases/latest/download/app-debug.apk"
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,29 +61,19 @@ class MainActivity : AppCompatActivity() {
                     if (paramTypes.isNotEmpty() && paramTypes[0] == Context::class.java) {
                         val args = arrayOfNulls<Any?>(paramTypes.size)
                         args[0] = this
-                        
                         for (i in paramTypes.indices) {
                             if (paramTypes[i] == Handler::class.java) {
                                 args[i] = mainHandler
                             }
                         }
-                        
                         try {
                             carInstance = method.invoke(null, *args)
-                            if (carInstance != null) {
-                                Log.d(TAG, "Car created via method with ${paramTypes.size} params")
-                                break
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed createCar variant: ${e.message}")
-                        }
+                            if (carInstance != null) break
+                        } catch (e: Exception) {}
                     }
                 }
 
-                if (carInstance == null) {
-                    Log.e(TAG, "!!! Could not create Car instance")
-                    return@Thread
-                }
+                if (carInstance == null) return@Thread
 
                 var isConnected = false
                 var retries = 0
@@ -102,13 +90,12 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (!isConnected) {
-                    Log.e(TAG, "!!! Car failed to connect after 10 seconds")
-                    runOnUiThread { tvStatus.text = "Ошибка: Нет связи с CarService" }
+                    Log.e(TAG, "!!! Car failed to connect")
+                    runOnUiThread { tvStatus.text = "Ошибка: Нет связи" }
                     return@Thread
                 }
                 
                 Log.d(TAG, "Car is connected!")
-                runOnUiThread { tvStatus.text = "Подключено! Смотрим логи..." }
 
                 val getCarManagerMethod = carClass.getMethod("getCarManager", String::class.java)
                 val pm = getCarManagerMethod.invoke(carInstance, "property")
@@ -139,15 +126,19 @@ class MainActivity : AppCompatActivity() {
                     Float::class.javaPrimitiveType 
                 )
                 
-                val ids = listOf(0x11600309, 0x1160030c, 0x11600204, 0x11600517, 0x11600518, 0x11400454, 0x11400e60)
+                // ВСЕ ID, КОТОРЫЕ МЫ НАШЛИ (стандартные и из приложения tr.halil.et5)
+                val ids = listOf(
+                    0x1160049a, 0x1160049b, 0x11600331, 0x11600332, 
+                    0x11600498, 0x11600499, 0x11600204, 0x1160031b,
+                    0x11600309, 0x1160030c, 0x11600461, 0x11600209,
+                    0x11600517, 0x11600518, 0x11400454, 0x11400e60
+                )
 
                 for (id in ids) {
                     try {
                         registerMethod.invoke(pm, callbackProxy, id, 1.0f) 
                         Log.d(TAG, "Subscribed to 0x${Integer.toHexString(id)}")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "FAILED TO SUBSCRIBE 0x${Integer.toHexString(id)}")
-                    }
+                    } catch (e: Exception) {}
                 }
 
             } catch (e: Exception) {
@@ -181,8 +172,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
             } catch (e: Exception) {
-                Log.e(TAG, "Download Error: ${e.message}")
-                runOnUiThread { statusView.text = "Ошибка скачивания: ${e.message}" }
+                runOnUiThread { statusView.text = "Ошибка: ${e.message}" }
             }
         }.start()
     }
