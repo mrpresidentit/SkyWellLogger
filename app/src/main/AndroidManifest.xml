@@ -20,7 +20,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
         
-        <!-- Главный экран приложения -->
+        <!-- ВОТ ОНА, ВОЛШЕБНАЯ СТРОЧКА -->
+        <uses-library android:name="android.car" android:required="true" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -30,16 +32,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Провайдер для безопасной передачи скачанного APK системе установки -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
+        <provider ...>
+            ...
         </provider>
-        
     </application>
 </manifest>
